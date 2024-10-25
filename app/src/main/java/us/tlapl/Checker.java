@@ -3,14 +3,68 @@
  */
 package us.tlapl;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 import tla2sany.parser.TLAplusParser;
+import tla2sany.semantic.AbortException;
+import tla2sany.semantic.Context;
+import tla2sany.semantic.Errors;
+import tla2sany.semantic.Generator;
+import tla2sany.semantic.ModuleNode;
+import tla2sany.semantic.SemanticNode;
+import tla2sany.st.TreeNode;
 
 public class Checker {
-    public String getGreeting() {
-        return "Hello World!";
+  
+  public static byte[] getSourceCode() throws URISyntaxException, IOException {
+      URI spec = ClassLoader.getSystemClassLoader().getResource("Test.tla").toURI();
+      Path specPath = Path.of(spec);
+      System.out.println(specPath.toString());
+      return Files.readAllBytes(specPath);
+  }
+  
+  public static TreeNode parseSyntax(byte[] sourceCode) {
+      InputStream inputStream = new ByteArrayInputStream(sourceCode);
+      TLAplusParser parser = new TLAplusParser(inputStream, StandardCharsets.UTF_8.name());
+      boolean result = parser.parse();
+      assert result;
+      TreeNode root = parser.rootNode();
+      assert null != root;
+      return root;
     }
 
-    public static void main(String[] args) {
-        System.out.println(new Checker().getGreeting());
+  private static ModuleNode checkSemantic(TreeNode parseTree) {
+      Context.reInit();
+      Errors log = new Errors();
+      Generator gen = new Generator(null, log);
+      SemanticNode.setError(log);
+      ModuleNode semanticTree = null;
+      try {
+        semanticTree = gen.generate(parseTree);
+      } catch (AbortException e) {
+        assert false : e.toString() + log.toString();
+      }
+      assert log.isSuccess() : log.toString();
+      assert null != semanticTree : log.toString();
+      return semanticTree;
+    }
+  
+  private static boolean checkLevel(ModuleNode semanticTree) {
+	  return semanticTree.levelCheck(1);
+  }
+
+    public static void main(String[] args) throws URISyntaxException, IOException {
+      byte[] sourceCode = getSourceCode();
+      TreeNode syntaxTree = parseSyntax(sourceCode);
+      ModuleNode semanticTree = checkSemantic(syntaxTree);
+      boolean levelCheck = checkLevel(semanticTree);
+      assert levelCheck;
     }
 }
