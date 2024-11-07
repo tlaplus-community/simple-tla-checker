@@ -3,68 +3,113 @@
  */
 package us.tlapl;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
-import tla2sany.parser.TLAplusParser;
-import tla2sany.semantic.AbortException;
-import tla2sany.semantic.Context;
-import tla2sany.semantic.Errors;
-import tla2sany.semantic.Generator;
 import tla2sany.semantic.ModuleNode;
-import tla2sany.semantic.SemanticNode;
-import tla2sany.st.TreeNode;
 
 public class Checker {
-  
-  public static byte[] getSourceCode() throws URISyntaxException, IOException {
-      URI spec = ClassLoader.getSystemClassLoader().getResource("Test.tla").toURI();
-      Path specPath = Path.of(spec);
-      System.out.println(specPath.toString());
-      return Files.readAllBytes(specPath);
-  }
-  
-  public static TreeNode parseSyntax(byte[] sourceCode) {
-      InputStream inputStream = new ByteArrayInputStream(sourceCode);
-      TLAplusParser parser = new TLAplusParser(inputStream, StandardCharsets.UTF_8.name());
-      boolean result = parser.parse();
-      assert result;
-      TreeNode root = parser.rootNode();
-      assert null != root;
-      return root;
-    }
+	
+	private class State {
+		
+	}
+	
+	private List<State> getInitialStates(ModuleNode root) {
+		return new ArrayList<State>();
+	}
+	
+	private List<State> getSuccessorStates(ModuleNode root, State current) {
+		return new ArrayList<State>();
+	}
+	
+	private long getStateHash(State s) {
+		return 0;
+	}
+	
+	private boolean satisfiesInvariants(ModuleNode root, State s) {
+		return true;
+	}
+	
+	private List<State> reconstructStateTrace(ModuleNode root, Map<Long, Long> predecessors, State last) {
+		ArrayList<Long> hashes = new ArrayList<Long>();
+		long current = getStateHash(last);
+		while (current != 0L) {
+			hashes.add(current);
+			current = predecessors.get(current);
+		}
+		
+		ArrayList<State> trace = new ArrayList<State>();
+		List<State> nextStates = getInitialStates(root);
+		for (long nextStateHash : hashes.reversed()) {
+			State nextState = null;
+			for (State candidate : nextStates) {
+				if (nextStateHash == getStateHash(candidate)) {
+					nextState = candidate;
+					break;
+				}
+			}
+			if (null == nextState) {
+				System.err.println("ERROR: Unable to reconstruct state trace.");
+			} else {
+				trace.add(nextState);
+				nextStates = getSuccessorStates(root, nextState);
+			}
+		}
+		return trace;
+	}
+	
+	private List<State> check(ModuleNode root) {
+		Map<Long, Long> predecessors = new HashMap<Long, Long>();
+		Deque<State> queue = new ArrayDeque<State>();
+		List<State> initialStates = getInitialStates(root);
+		queue.addAll(initialStates);
+		for (State init : initialStates) {
+			predecessors.put(getStateHash(init), 0L);
+		}
 
-  private static ModuleNode checkSemantic(TreeNode parseTree) {
-      Context.reInit();
-      Errors log = new Errors();
-      Generator gen = new Generator(null, log);
-      SemanticNode.setError(log);
-      ModuleNode semanticTree = null;
-      try {
-        semanticTree = gen.generate(parseTree);
-      } catch (AbortException e) {
-        assert false : e.toString() + log.toString();
-      }
-      assert log.isSuccess() : log.toString();
-      assert null != semanticTree : log.toString();
-      return semanticTree;
-    }
+		while (!queue.isEmpty()) {
+			State current = queue.removeFirst();
+			long currentHash = getStateHash(current);
+			for (State next : getSuccessorStates(root, current)) {
+				long nextHash = getStateHash(next);
+				if (!predecessors.containsKey(nextHash)) {
+					predecessors.put(nextHash, currentHash);
+					if (!satisfiesInvariants(root, next)) {
+						return reconstructStateTrace(root, predecessors, next);
+					}
+					queue.push(next);
+				}
+			}
+		}
+		
+		return null;
+	}
+	
+	public Checker() { }
   
-  private static boolean checkLevel(ModuleNode semanticTree) {
-	  return semanticTree.levelCheck(1);
-  }
-
-    public static void main(String[] args) throws URISyntaxException, IOException {
-      byte[] sourceCode = getSourceCode();
-      TreeNode syntaxTree = parseSyntax(sourceCode);
-      ModuleNode semanticTree = checkSemantic(syntaxTree);
-      boolean levelCheck = checkLevel(semanticTree);
-      assert levelCheck;
+    public static void main(String[] args) throws IOException {
+    	if (args.length > 0) {
+   			Path spec = Path.of(args[0]);
+    		try {
+    			ModuleNode root = Parser.parse(spec);
+    			Checker mc = new Checker();
+    			List<State> failureTrace = mc.check(root);
+    			if (null == failureTrace) {
+    				System.out.println("Success!");
+    			} else {
+    				System.out.println("Failure.");
+    			}
+    		} catch (IOException e) {
+              System.err.println("Failed to read file " + spec.toString());
+            }
+    	} else {
+    		System.err.println("Missing CLI parameter: spec path");
+    	}
     }
 }
