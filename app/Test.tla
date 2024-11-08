@@ -1,5 +1,8 @@
 ---- MODULE Test ----
-VARIABLE x
-Init == x = FALSE
-Next == x' = ~x
+VARIABLES x, y
+Init ==
+  ∧ x = "foobar"
+  ∧ y = FALSE
+Next ==
+  ∨ x' = ~x
 =====================
