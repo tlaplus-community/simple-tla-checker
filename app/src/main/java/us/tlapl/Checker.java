@@ -4,49 +4,75 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
-import tla2sany.semantic.ModuleNode;
-
+/**
+ * Top-level BFS loop for model-checking a TLA⁺ file.
+ */
 public class Checker {
 	
-	static List<State> reconstructStateTrace(ModuleNode root, Map<Long, Long> predecessors, State last) {
-		LinkedList<Long> hashes = new LinkedList<Long>();
-		long current = last.getStateHash();
-		while (current != 0L) {
-			hashes.addFirst(current);
-			current = predecessors.get(current);
+	/**
+	 * CLI exit codes.
+	 */
+	private static final int SUCCESS = 0;
+	private static final int INVALID_CLI_PARAMS = 1;
+	private static final int SPEC_FILE_READ_FAILURE = 2;
+	private static final int INVARIANT_FAILURE = 10;
+
+	/**
+	 * Main entrypoint to the program. Takes a single CLI parameter: the path
+	 * to the spec.
+	 * @param args The CLI parameters.
+	 * @throws IOException 
+	 */
+	public static void main(String... args) {
+		if (args.length > 0) {
+			Path specPath = Path.of(args[0]);
+			int result = run(specPath);
+			System.exit(result);
+		} else {
+			System.err.println("Missing CLI parameter: spec path");
+			System.exit(INVALID_CLI_PARAMS);
 		}
-		
-		ArrayList<State> trace = new ArrayList<State>();
-		List<State> nextStates = State.getInitialStates(root);
-		for (long nextStateHash : hashes) {
-			State nextState = null;
-			for (State candidate : nextStates) {
-				if (nextStateHash == candidate.getStateHash()) {
-					nextState = candidate;
-					break;
-				}
-			}
-			if (null == nextState) {
-				System.err.println("ERROR: Unable to reconstruct state trace.");
+	}
+
+	/**
+	 * Reads & parses spec then checks model.
+	 * @param spec Path to spec file.
+	 * @return Error code; {@link SUCCESS} on success.
+	 */
+	static int run(Path spec) {
+		try {
+			Model model = Parser.parse(spec);
+			List<State> failureTrace = check(model);
+			if (null == failureTrace) {
+				System.out.println("Success!");
+				return SUCCESS;
 			} else {
-				trace.add(nextState);
-				nextStates = nextState.getSuccessorStates(root);
+				System.err.println("Failure.");
+				System.err.println(failureTrace.toString());
+				return INVARIANT_FAILURE;
 			}
+		} catch (IOException e) {
+			System.err.println("Failed to read file " + spec.toString());
+			return SPEC_FILE_READ_FAILURE;
 		}
-		return trace;
 	}
 	
-	static List<State> check(ModuleNode root) {
+	/**
+	 * Runs a breadth-first search on the given spec, until either all states
+	 * are exhausted or an invariant failure is found.
+	 * @param model The spec model to check.
+	 * @return A trace to a state violating an invariant; null if successful.
+	 */
+	static List<State> check(Model model) {
 		Map<Long, Long> predecessors = new HashMap<Long, Long>();
 		Deque<State> queue = new ArrayDeque<State>();
-		List<State> initialStates = State.getInitialStates(root);
+		List<State> initialStates = model.getInitialStates();
 		queue.addAll(initialStates);
 		for (State init : initialStates) {
 			predecessors.put(init.getStateHash(), 0L);
@@ -55,12 +81,12 @@ public class Checker {
 		while (!queue.isEmpty()) {
 			State current = queue.removeFirst();
 			long currentHash = current.getStateHash();
-			for (State next : current.getSuccessorStates(root)) {
+			for (State next : model.getSuccessorStates(current)) {
 				long nextHash = next.getStateHash();
 				if (!predecessors.containsKey(nextHash)) {
 					predecessors.put(nextHash, currentHash);
-					if (!next.satisfiesInvariants(root)) {
-						return reconstructStateTrace(root, predecessors, next);
+					if (!model.satisfiesInvariants(next)) {
+						return reconstructStateTrace(model, predecessors, next);
 					}
 					queue.push(next);
 				}
@@ -70,23 +96,45 @@ public class Checker {
 		return null;
 	}
 	
-    public static void main(String[] args) throws IOException {
-    	if (args.length > 0) {
-   			Path spec = Path.of(args[0]);
-    		try {
-    			ModuleNode root = Parser.parse(spec);
-    			List<State> failureTrace = check(root);
-    			if (null == failureTrace) {
-    				System.out.println("Success!");
-    			} else {
-    				System.out.println("Failure.");
-    				System.out.println(failureTrace.toString());
-    			}
-    		} catch (IOException e) {
-              System.err.println("Failed to read file " + spec.toString());
-            }
-    	} else {
-    		System.err.println("Missing CLI parameter: spec path");
-    	}
-    }
+	/**
+	 * Given a predecessor graph and a target node, constructs a trace from
+	 * the initial state to the target state. This is done by using the
+	 * predecessor graph to build a list of state hashes from the target
+	 * state back to the initial state, then reversing that list and
+	 * constructing a trace by starting at the initial state, checking all
+	 * next states, finding which one matches the expected state hash, then
+	 * repeating that process for the matching state until the target state
+	 * is reached.
+	 * @param Model The spec model.
+	 * @param predecessors Map each state's hash to its predecessor.
+	 * @param last The target state to construct a trace to.
+	 * @return A sequence of states from initial state to target.
+	 */
+	static List<State> reconstructStateTrace(Model model, Map<Long, Long> predecessors, State last) {
+		LinkedList<Long> hashes = new LinkedList<Long>();
+		long current = last.getStateHash();
+		while (current != 0L) {
+			hashes.addFirst(current);
+			current = predecessors.get(current);
+		}
+		
+		ArrayList<State> trace = new ArrayList<State>();
+		List<State> nextStates = model.getInitialStates();
+		for (long nextStateHash : hashes) {
+			State nextState = null;
+			for (State candidate : nextStates) {
+				if (nextStateHash == candidate.getStateHash()) {
+					nextState = candidate;
+					break;
+				}
+			}
+			if (null == nextState) {
+				throw new RuntimeException("ERROR: Unable to reconstruct state trace.");
+			} else {
+				trace.add(nextState);
+				nextStates = model.getSuccessorStates(nextState);
+			}
+		}
+		return trace;
+	}
 }

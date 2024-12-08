@@ -53,12 +53,12 @@ public class Parser {
     return semanticTree.levelCheck(1);
   }
 
-  public static ModuleNode parse(Path spec) throws IOException {
+  public static Model parse(Path spec) throws IOException {
       byte[] sourceCode = getSourceCode(spec);
       TreeNode syntaxTree = parseSyntax(sourceCode);
       ModuleNode semanticTree = checkSemantic(syntaxTree);
       boolean levelCheck = checkLevel(semanticTree);
       assert levelCheck;
-      return semanticTree;
+      return new Model(semanticTree);
   }
 }

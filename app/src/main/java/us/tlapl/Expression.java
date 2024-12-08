@@ -11,7 +11,7 @@ import tla2sany.semantic.SubstInNode;
 import tla2sany.semantic.ExprNode;
 
 public class Expression {
-	static Object valueOf(ExprNode expr) {
+	static Object eval(ExprNode expr) {
 		if (expr instanceof AtNode) {
 			throw new UnsupportedOperationException("At node type not supported");
 		} else if (expr instanceof DecimalNode) {
