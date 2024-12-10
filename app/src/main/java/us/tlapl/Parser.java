@@ -43,6 +43,16 @@ public class Parser {
 		return new Model(semanticTree, deps);
 	}
 	
+	/**
+	 * Parses spec, transitively resolves dependencies, then runs semantic
+	 * analysis & level-checking on it; this function is called recursively
+	 * from dependencies as they are resolved.
+	 * @param sourceCode The source module, as an input stream.
+	 * @param deps A table of resolved dependencies.
+	 * @param pendingModules Modules with yet-unresolved dependencies.
+	 * @return The root node of the spec's semantic graph.
+	 * @throws IOException If a module dependency cannot be resolved.
+	 */
 	private static ModuleNode parse(
 		InputStream sourceCode,
 		ExternalModuleTable deps,
@@ -70,6 +80,17 @@ public class Parser {
 		return root;
 	}
 
+	/**
+	 * Resolves dependencies of the current module in a depth-first fashion.
+	 * Circular dependencies are detected by keeping track of the modules
+	 * that are in the process of having their dependencies resolved. The
+	 * resolved dependencies are added to the deps table, in place. This also
+	 * ensures dependencies are not resolved multiple times.
+	 * @param syntaxTree The syntax parse tree.
+	 * @param deps Table of resolved dependencies.
+	 * @param pendingModules Modules with yet-unresolved dependencies.
+	 * @throws IOException If a module dependency cannot be resolved.
+	 */
 	private static void resolveDependencies(
 		TreeNode syntaxTree,
 		ExternalModuleTable deps,
@@ -81,6 +102,7 @@ public class Parser {
 
 		// Index 1 is the EXTENDS statement: EXTENDS Naturals, Sequences
 		TreeNode extensions = syntaxTree.heirs()[1];
+		// The zeroeth element of the heirs is the EXTENDS keyword itself
 		for (int i = 1; i < extensions.heirs().length; i++) {
 			TreeNode extension = extensions.heirs()[i];
 			String depName = extension.getImage();
@@ -99,6 +121,13 @@ public class Parser {
 		pendingModules.remove(moduleName);
 	}
 
+	/**
+	 * Find the module with the given name. Currently only resolves standard
+	 * modules that are embedded in the tla2tools jar.
+	 * @param moduleName The name of the module to resolve.
+	 * @return An input stream of the module source code.
+	 * @throws IOException If the module could not be found.
+	 */
 	private static InputStream resolveModule(String moduleName) throws IOException {
 		String resourcePath = "/tla2sany/StandardModules/" + moduleName + ".tla";
 		InputStream module = Parser.class.getResourceAsStream(resourcePath);
