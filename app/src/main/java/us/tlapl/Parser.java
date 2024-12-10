@@ -3,18 +3,15 @@ package us.tlapl;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
+import java.util.HashSet;
+import java.util.Set;
 
 import tla2sany.semantic.ModuleNode;
 import tla2sany.st.TreeNode;
+import util.UniqueString;
+
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
-import java.net.URISyntaxException;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
 import tla2sany.parser.TLAplusParser;
@@ -38,14 +35,21 @@ public class Parser {
 	 * @throws IOException If the spec file cannot be read.
 	 */
 	public static Model parse(Path spec) throws IOException {
-		Map<String, ModuleNode> deps = new HashMap<String, ModuleNode>();
-		return new Model(parse(spec, deps));
+		byte[] sourceCodeBytes = Files.readAllBytes(spec);
+		InputStream sourceCode = new ByteArrayInputStream(sourceCodeBytes);
+		ExternalModuleTable deps = new ExternalModuleTable();
+		ModuleNode semanticTree = parse(sourceCode, deps, new HashSet<String>());
+		deps.setRootModule(semanticTree);
+		return new Model(semanticTree, deps);
 	}
 	
-	private static ModuleNode parse(Path spec, Map<String, ModuleNode> deps) throws IOException {
-		byte[] sourceCode = getSourceCode(spec);
+	private static ModuleNode parse(
+		InputStream sourceCode,
+		ExternalModuleTable deps,
+		Set<String> pendingModules
+	) throws IOException {
 		TreeNode syntaxTree = parseSyntax(sourceCode);
-		resolveDependencies(syntaxTree, deps);
+		resolveDependencies(syntaxTree, deps, pendingModules);
 		ModuleNode semanticTree = checkSemantic(syntaxTree, deps);
 		boolean levelCheck = checkLevel(semanticTree);
 		assert levelCheck;
@@ -53,23 +57,12 @@ public class Parser {
 	}
 	
 	/**
-	 * Get spec source text as UTF-8 bytes.
-	 * @param spec The path to the spec.
-	 * @return The bytes comprising the source text.
-	 * @throws IOException If spec file cannot be read.
-	 */
-	private static byte[] getSourceCode(Path spec) throws IOException {
-		return Files.readAllBytes(spec);
-	}
-
-	/**
 	 * Parses spec syntax; does not resolve references or anything.
-	 * @param sourceCode The spec source code, as bytes.
+	 * @param sourceCode The spec source code, as an input stream.
 	 * @return The root node of the spec's syntax tree.
 	 */
-	private static TreeNode parseSyntax(byte[] sourceCode) {
-		InputStream inputStream = new ByteArrayInputStream(sourceCode);
-		TLAplusParser parser = new TLAplusParser(inputStream, StandardCharsets.UTF_8.name());
+	private static TreeNode parseSyntax(InputStream sourceCode) {
+		TLAplusParser parser = new TLAplusParser(sourceCode, StandardCharsets.UTF_8.name());
 		boolean result = parser.parse();
 		assert result;
 		TreeNode root = parser.rootNode();
@@ -77,30 +70,42 @@ public class Parser {
 		return root;
 	}
 
-	private static void resolveDependencies(TreeNode syntaxTree, Map<String, ModuleNode> deps) throws IOException {
-		// Index 0 is the module header, index 1 is the EXTENDS statements
+	private static void resolveDependencies(
+		TreeNode syntaxTree,
+		ExternalModuleTable deps,
+		Set<String> pendingModules
+	) throws IOException {
+		// Index 0 is the module header: ---- MODULE ModName ----
+		String moduleName = syntaxTree.heirs()[0].heirs()[1].getImage();
+		pendingModules.add(moduleName);
+
+		// Index 1 is the EXTENDS statement: EXTENDS Naturals, Sequences
 		TreeNode extensions = syntaxTree.heirs()[1];
-		for (TreeNode extension : extensions.heirs()) {
-			String moduleName = extension.getImage();
-			if (!deps.containsKey(moduleName)) {
-				Path modulePath = resolveModuleName(moduleName);
-				deps.put(moduleName, parse(modulePath, deps));
+		for (int i = 1; i < extensions.heirs().length; i++) {
+			TreeNode extension = extensions.heirs()[i];
+			String depName = extension.getImage();
+			if (pendingModules.contains(depName)) {
+				throw new IllegalArgumentException(
+					"Circular dependency: module " + moduleName + " depends on " + depName + ", which in turn depends on it."
+				);
+			}
+			if (null == deps.getModuleNode(depName)) {
+				InputStream depSourceCode = resolveModule(depName);
+				ModuleNode depSemanticTree = parse(depSourceCode, deps, pendingModules);
+				deps.put(UniqueString.of(depName), null, depSemanticTree);
 			}
 		}
+
+		pendingModules.remove(moduleName);
 	}
 
-	private static Path resolveModuleName(String moduleName) throws IOException {
+	private static InputStream resolveModule(String moduleName) throws IOException {
 		String resourcePath = "/tla2sany/StandardModules/" + moduleName + ".tla";
-		URL resource = Parser.class.getResource(resourcePath);
-		if (null == resource) {
-			throw new IOException("Unable to find standard module " + moduleName);
+		InputStream module = Parser.class.getResourceAsStream(resourcePath);
+		if (null == module) {
+			throw new IOException("Unable to find module " + moduleName);
 		}
-		try {
-			return Paths.get(resource.toURI());
-		} catch (URISyntaxException e) {
-			// This should never happen.
-			return null;
-		}
+		return module;
 	}
 
 	/**
@@ -110,12 +115,10 @@ public class Parser {
 	 * @param deps Parsed modules this spec can depend upon.
 	 * @return The root node of the spec's semantic graph.
 	 */
-	private static ModuleNode checkSemantic(TreeNode parseTree, Map<String, ModuleNode> deps) {
+	private static ModuleNode checkSemantic(TreeNode parseTree, ExternalModuleTable deps) {
 		Context.reInit();
 		Errors log = new Errors();
-		// TODO: convert deps to ExternalModuleTable
-		// Need to figure out contexts
-		Generator gen = new Generator(null, log);
+		Generator gen = new Generator(deps, log);
 		SemanticNode.setError(log);
 		ModuleNode semanticTree = null;
 		try {

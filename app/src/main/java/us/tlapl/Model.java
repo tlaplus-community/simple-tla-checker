@@ -8,6 +8,7 @@ import java.util.stream.Collectors;
 import tla2sany.semantic.ASTConstants;
 import tla2sany.semantic.ExprNode;
 import tla2sany.semantic.ExprOrOpArgNode;
+import tla2sany.semantic.ExternalModuleTable;
 import tla2sany.semantic.LevelConstants;
 import tla2sany.semantic.ModuleNode;
 import tla2sany.semantic.OpApplNode;
@@ -28,6 +29,11 @@ class Model {
 	private final ModuleNode root;
 	
 	/**
+	 * The spec's module dependencies.
+	 */
+	private final ExternalModuleTable deps;
+	
+	/**
 	 * The next-state relation.
 	 */
 	private final OpApplNode next;
@@ -36,9 +42,11 @@ class Model {
 	 * Construct a new {@link Model} instance. Finds and validates the next-
 	 * state relation.
 	 * @param root The spec's semantic parse tree.
+	 * @param deps The spec's module dependencies.
 	 */
-	Model(ModuleNode root) {
+	Model(ModuleNode root, ExternalModuleTable deps) {
 		this.root = root;
+		this.deps = deps;
 		OpDefNode next = this.findDefinition("Next");
 		ExprNode nextExpr = next.getBody();
 		if (next.getArity() != 0) {

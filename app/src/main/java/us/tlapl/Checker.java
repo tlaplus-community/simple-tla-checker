@@ -59,6 +59,7 @@ public class Checker {
 				return INVARIANT_FAILURE;
 			}
 		} catch (IOException e) {
+			System.err.println(e.toString());
 			System.err.println("Failed to read file " + spec.toString());
 			return SPEC_FILE_READ_FAILURE;
 		}
