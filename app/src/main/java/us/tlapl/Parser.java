@@ -13,10 +13,10 @@ import java.io.FileInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
+import tla2sany.parser.ParseException;
 import tla2sany.parser.TLAplusParser;
 import tla2sany.semantic.AbortException;
 import tla2sany.semantic.Context;
-import tla2sany.semantic.Errors;
 import tla2sany.semantic.ExternalModuleTable;
 import tla2sany.semantic.Generator;
 import tla2sany.semantic.SemanticNode;
@@ -26,21 +26,26 @@ import tla2sany.semantic.SemanticNode;
  */
 public class Parser {
 	
+	private static tla2sany.semantic.Errors staticLog = new tla2sany.semantic.Errors();
+	
 	public static class Result {
 		public final TreeNode syntaxTree;
 		public final ExternalModuleTable dependencies;
 		public final Generator semanticChecker;
 		public final ModuleNode semanticTree;
+		public final tla2sany.semantic.Errors log;
 		public Result(
 				TreeNode syntaxTree,
 				ExternalModuleTable dependencies,
 				Generator semanticChecker,
-				ModuleNode semanticTree
+				ModuleNode semanticTree,
+				tla2sany.semantic.Errors log
 			) {
 			this.syntaxTree = syntaxTree;
 			this.dependencies = dependencies;
 			this.semanticChecker = semanticChecker;
 			this.semanticTree = semanticTree;
+			this.log = log;
 		}
 	}
 	
@@ -51,8 +56,18 @@ public class Parser {
 	 * @return A parse result record.
 	 * @throws IOException If the spec file cannot be read.
 	 */
-	public static Result parse(Path spec) throws IOException {
-		InputStream sourceCode = new FileInputStream(spec.toFile());
+	public static Result parse(Path spec) throws
+			Errors.ModuleResolutionFailure,
+			Errors.SyntaxParsingFailure,
+			Errors.SemanticCheckingFailure,
+			Errors.LevelCheckingFailure {
+		SemanticNode.setError(staticLog);
+		InputStream sourceCode;
+		try {
+			sourceCode = new FileInputStream(spec.toFile());
+		} catch (IOException e) {
+			throw new Errors.ModuleResolutionFailure(spec.toString());
+		}
 		ExternalModuleTable deps = new ExternalModuleTable();
 		Result result = parse(sourceCode, deps, new HashSet<String>());
 		result.dependencies.setRootModule(result.semanticTree);
@@ -67,18 +82,20 @@ public class Parser {
 	 * @param deps A table of resolved dependencies.
 	 * @param pendingModules Modules with yet-unresolved dependencies.
 	 * @return A parse result record.
-	 * @throws IOException If a module dependency cannot be resolved.
 	 */
 	private static Result parse(
-		InputStream sourceCode,
-		ExternalModuleTable deps,
-		Set<String> pendingModules
-	) throws IOException {
+			InputStream sourceCode,
+			ExternalModuleTable deps,
+			Set<String> pendingModules
+		) throws
+			Errors.ModuleResolutionFailure,
+			Errors.SyntaxParsingFailure,
+			Errors.SemanticCheckingFailure,
+			Errors.LevelCheckingFailure {
 		TreeNode syntaxTree = parseSyntax(sourceCode);
 		resolveDependencies(syntaxTree, deps, pendingModules);
 		Result result = checkSemantic(syntaxTree, deps);
-		boolean levelCheck = checkLevel(result.semanticTree);
-		assert levelCheck;
+		checkLevel(result.semanticTree);
 		return result;
 	}
 	
@@ -87,13 +104,15 @@ public class Parser {
 	 * @param sourceCode The spec source code, as an input stream.
 	 * @return The root node of the spec's syntax tree.
 	 */
-	private static TreeNode parseSyntax(InputStream sourceCode) {
+	private static TreeNode parseSyntax(
+		InputStream sourceCode
+	) throws Errors.SyntaxParsingFailure {
 		TLAplusParser parser = new TLAplusParser(sourceCode, StandardCharsets.UTF_8.name());
-		boolean result = parser.parse();
-		assert result;
-		TreeNode root = parser.rootNode();
-		assert null != root;
-		return root;
+		try {
+			return parser.CompilationUnit();
+		} catch (ParseException e) {
+			throw new Errors.SyntaxParsingFailure(e);
+		}
 	}
 
 	/**
@@ -108,10 +127,14 @@ public class Parser {
 	 * @throws IOException If a module dependency cannot be resolved.
 	 */
 	private static void resolveDependencies(
-		TreeNode syntaxTree,
-		ExternalModuleTable deps,
-		Set<String> pendingModules
-	) throws IOException {
+			TreeNode syntaxTree,
+			ExternalModuleTable deps,
+			Set<String> pendingModules
+		) throws
+			Errors.ModuleResolutionFailure,
+			Errors.SyntaxParsingFailure,
+			Errors.SemanticCheckingFailure,
+			Errors.LevelCheckingFailure {
 		// Index 0 is the module header: ---- MODULE ModName ----
 		String moduleName = syntaxTree.heirs()[0].heirs()[1].getImage();
 		pendingModules.add(moduleName);
@@ -144,11 +167,13 @@ public class Parser {
 	 * @return An input stream of the module source code.
 	 * @throws IOException If the module could not be found.
 	 */
-	private static InputStream resolveModule(String moduleName) throws IOException {
+	private static InputStream resolveModule(
+		String moduleName
+	) throws Errors.ModuleResolutionFailure {
 		String resourcePath = "/tla2sany/StandardModules/" + moduleName + ".tla";
 		InputStream module = Parser.class.getResourceAsStream(resourcePath);
 		if (null == module) {
-			throw new IOException("Unable to find module " + moduleName);
+			throw new Errors.ModuleResolutionFailure(moduleName);
 		}
 		return module;
 	}
@@ -160,28 +185,33 @@ public class Parser {
 	 * @param deps Parsed modules this spec can depend upon.
 	 * @return A parse result record.
 	 */
-	private static Result checkSemantic(TreeNode parseTree, ExternalModuleTable deps) {
+	private static Result checkSemantic(
+		TreeNode parseTree,
+		ExternalModuleTable deps
+	) throws Errors.SemanticCheckingFailure {
 		Context.reInit();
-		Errors log = new Errors();
+		tla2sany.semantic.Errors log = new tla2sany.semantic.Errors();
 		Generator gen = new Generator(deps, log);
-		SemanticNode.setError(log);
 		ModuleNode semanticTree = null;
 		try {
 			semanticTree = gen.generate(parseTree);
 		} catch (AbortException e) {
-			assert false : e.toString() + log.toString();
+			throw new Errors.SemanticCheckingFailure(e);
 		}
-		assert log.isSuccess() : log.toString();
-		assert null != semanticTree : log.toString();
-		return new Result(parseTree, deps, gen, semanticTree);
+		if (log.isFailure() || null == semanticTree) {
+			throw new Errors.SemanticCheckingFailure(log);
+		}
+		return new Result(parseTree, deps, gen, semanticTree, log);
 	}
 	
 	/**
 	 * Performs level-checking analysis on a spec's semantic graph.
 	 * @param semanticTree The root node of the spec's semantic graph.
-	 * @return Whether level-checking was successful.
 	 */
-	private static boolean checkLevel(ModuleNode semanticTree) {
-		return semanticTree.levelCheck(1);
+	private static void checkLevel(ModuleNode semanticTree) throws
+			Errors.LevelCheckingFailure {
+		if (!semanticTree.levelCheck(1)) {
+			throw new Errors.LevelCheckingFailure(staticLog);
+		}
 	}
 }

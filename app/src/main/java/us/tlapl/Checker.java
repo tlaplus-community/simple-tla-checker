@@ -18,14 +18,6 @@ import tla2sany.parser.ParseException;
 public class Checker {
 	
 	/**
-	 * CLI exit codes.
-	 */
-	private static final int SUCCESS = 0;
-	private static final int INVALID_CLI_PARAMS = 1;
-	private static final int SPEC_FILE_READ_FAILURE = 2;
-	private static final int INVARIANT_FAILURE = 10;
-
-	/**
 	 * Main entrypoint to the program. Takes a single CLI parameter: the path
 	 * to the spec.
 	 * @param args The CLI parameters.
@@ -38,7 +30,7 @@ public class Checker {
 			System.exit(result);
 		} else {
 			System.err.println("Missing CLI parameter: spec path");
-			System.exit(INVALID_CLI_PARAMS);
+			System.exit(Errors.INVALID_CLI_PARAMS);
 		}
 	}
 
@@ -55,16 +47,15 @@ public class Checker {
 			List<State> failureTrace = check(model);
 			if (null == failureTrace) {
 				System.out.println("Success!");
-				return SUCCESS;
+				return Errors.SUCCESS;
 			} else {
 				System.err.println("Failure.");
 				System.err.println(failureTrace.toString());
-				return INVARIANT_FAILURE;
+				return Errors.INVARIANT_FAILURE;
 			}
-		} catch (IOException e) {
+		} catch (Errors.CheckerError e) {
 			System.err.println(e.toString());
-			System.err.println("Failed to read file " + spec.toString());
-			return SPEC_FILE_READ_FAILURE;
+			return e.getErrorCode();
 		}
 	}
 	

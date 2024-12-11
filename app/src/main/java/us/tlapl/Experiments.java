@@ -15,9 +15,7 @@ import java.nio.charset.StandardCharsets;
 import tla2sany.parser.ParseException;
 import tla2sany.parser.SyntaxTreeNode;
 import tla2sany.parser.TLAplusParser;
-import tla2sany.semantic.Errors;
 import tla2sany.semantic.Generator;
-import tla2sany.semantic.SemanticNode;
 
 public class Experiments {
 
