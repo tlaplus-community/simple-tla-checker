@@ -32,7 +32,6 @@ public class Checker {
 	 * @throws IOException 
 	 */
 	public static void main(String... args) throws ParseException {
-		Parser.addDefinition(null, "---- MODULE Test ----\nfoo == 5\n====");
 		if (args.length > 0) {
 			Path specPath = Path.of(args[0]);
 			int result = run(specPath);
@@ -48,9 +47,11 @@ public class Checker {
 	 * @param spec Path to spec file.
 	 * @return Error code; {@link SUCCESS} on success.
 	 */
-	static int run(Path spec) {
+	static int run(Path spec) throws ParseException {
 		try {
-			Model model = Parser.parse(spec);
+			Parser.Result parsed = Parser.parse(spec);
+			Experiments.addNewDefinition(parsed, "foo == 5");
+			Model model = new Model(parsed);
 			List<State> failureTrace = check(model);
 			if (null == failureTrace) {
 				System.out.println("Success!");

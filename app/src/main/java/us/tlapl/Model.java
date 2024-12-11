@@ -24,14 +24,9 @@ import tla2sany.st.SyntaxTreeConstants;
 class Model {
 	
 	/**
-	 * The spec's semantic parse tree.
+	 * The spec's parse outputs.
 	 */
-	private final ModuleNode root;
-	
-	/**
-	 * The spec's module dependencies.
-	 */
-	private final ExternalModuleTable deps;
+	public final Parser.Result parsed;
 	
 	/**
 	 * The next-state relation.
@@ -41,12 +36,10 @@ class Model {
 	/**
 	 * Construct a new {@link Model} instance. Finds and validates the next-
 	 * state relation.
-	 * @param root The spec's semantic parse tree.
-	 * @param deps The spec's module dependencies.
+	 * @param parsed The spec's parse outputs.
 	 */
-	Model(ModuleNode root, ExternalModuleTable deps) {
-		this.root = root;
-		this.deps = deps;
+	Model(Parser.Result parsed) {
+		this.parsed = parsed;
 		OpDefNode next = this.findDefinition("Next");
 		ExprNode nextExpr = next.getBody();
 		if (next.getArity() != 0) {
@@ -66,7 +59,7 @@ class Model {
 	}
 	
 	private OpDefNode findDefinition(String name) throws IllegalArgumentException {
-		return Arrays.stream(this.root.getOpDefs())
+		return Arrays.stream(this.parsed.semanticTree.getOpDefs())
 			.filter((op) -> op.getName().toString().equals(name))
 			.findFirst()
 			.orElseThrow(() -> new IllegalArgumentException("Spec must contain definition " + name));
@@ -107,7 +100,7 @@ class Model {
 		}
 		
 		// Use Init to derive initial value of each spec variable.
-		State.Partial initialState = new State.Partial(this.root.getVariableDecls());
+		State.Partial initialState = new State.Partial(this.parsed.semanticTree.getVariableDecls());
 		for (ExprOrOpArgNode conjunct : body.getArgs()) {
 			if (!(conjunct instanceof OpApplNode)) {
 				throw new IllegalArgumentException("Conjunct must be operator application node");
