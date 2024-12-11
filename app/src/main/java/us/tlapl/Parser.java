@@ -1,7 +1,6 @@
 package us.tlapl;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Set;
@@ -11,9 +10,12 @@ import tla2sany.st.TreeNode;
 import util.UniqueString;
 
 import java.io.ByteArrayInputStream;
+import java.io.FileInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
+import tla2sany.parser.ParseException;
+import tla2sany.parser.SyntaxTreeNode;
 import tla2sany.parser.TLAplusParser;
 import tla2sany.semantic.AbortException;
 import tla2sany.semantic.Context;
@@ -35,12 +37,17 @@ public class Parser {
 	 * @throws IOException If the spec file cannot be read.
 	 */
 	public static Model parse(Path spec) throws IOException {
-		byte[] sourceCodeBytes = Files.readAllBytes(spec);
-		InputStream sourceCode = new ByteArrayInputStream(sourceCodeBytes);
+		InputStream sourceCode = new FileInputStream(spec.toFile());
 		ExternalModuleTable deps = new ExternalModuleTable();
 		ModuleNode semanticTree = parse(sourceCode, deps, new HashSet<String>());
 		deps.setRootModule(semanticTree);
 		return new Model(semanticTree, deps);
+	}
+	
+	public static void addDefinition(Model model, String definition) throws ParseException {
+		InputStream sourceCode = new ByteArrayInputStream(definition.getBytes(StandardCharsets.UTF_8));
+		TLAplusParser parser = new TLAplusParser(sourceCode, StandardCharsets.UTF_8.name());
+		SyntaxTreeNode body = parser.CompilationUnit();
 	}
 	
 	/**

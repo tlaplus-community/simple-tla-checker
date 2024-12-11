@@ -10,6 +10,8 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
+import tla2sany.parser.ParseException;
+
 /**
  * Top-level BFS loop for model-checking a TLA⁺ file.
  */
@@ -29,7 +31,8 @@ public class Checker {
 	 * @param args The CLI parameters.
 	 * @throws IOException 
 	 */
-	public static void main(String... args) {
+	public static void main(String... args) throws ParseException {
+		Parser.addDefinition(null, "---- MODULE Test ----\nfoo == 5\n====");
 		if (args.length > 0) {
 			Path specPath = Path.of(args[0]);
 			int result = run(specPath);
