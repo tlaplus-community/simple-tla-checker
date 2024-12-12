@@ -1,9 +1,10 @@
 package us.tlapl;
 
 import java.io.IOException;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.ArrayDeque;
+import java.util.Deque;
 
 import tla2sany.semantic.ModuleNode;
 import tla2sany.st.TreeNode;
@@ -26,7 +27,7 @@ import tla2sany.semantic.SemanticNode;
  */
 public class Parser {
 	
-	private static tla2sany.semantic.Errors staticLog = new tla2sany.semantic.Errors();
+	public static tla2sany.semantic.Errors STATIC_LOG = new tla2sany.semantic.Errors();
 	
 	public static class Result {
 		public final TreeNode syntaxTree;
@@ -58,10 +59,11 @@ public class Parser {
 	 */
 	public static Result parse(Path spec) throws
 			Errors.ModuleResolutionFailure,
+			Errors.CircularModuleDependencyFailure,
 			Errors.SyntaxParsingFailure,
 			Errors.SemanticCheckingFailure,
 			Errors.LevelCheckingFailure {
-		SemanticNode.setError(staticLog);
+		SemanticNode.setError(STATIC_LOG);
 		InputStream sourceCode;
 		try {
 			sourceCode = new FileInputStream(spec.toFile());
@@ -69,7 +71,10 @@ public class Parser {
 			throw new Errors.ModuleResolutionFailure(spec.toString());
 		}
 		ExternalModuleTable deps = new ExternalModuleTable();
-		Result result = parse(sourceCode, deps, new HashSet<String>());
+		Deque<String> pendingModules = new ArrayDeque<String>();
+		Path specDir = spec.getParent();
+		Path[] searchPaths = new Path[] { null == specDir ? Path.of(".") : specDir };
+		Result result = parse(sourceCode, deps, pendingModules, searchPaths);
 		result.dependencies.setRootModule(result.semanticTree);
 		return result;
 	}
@@ -81,19 +86,22 @@ public class Parser {
 	 * @param sourceCode The source module, as an input stream.
 	 * @param deps A table of resolved dependencies.
 	 * @param pendingModules Modules with yet-unresolved dependencies.
+	 * @param moduleSearchPaths Directories in which to look for modules.
 	 * @return A parse result record.
 	 */
 	private static Result parse(
 			InputStream sourceCode,
 			ExternalModuleTable deps,
-			Set<String> pendingModules
+			Deque<String> pendingModules,
+			Path[] moduleSearchPaths
 		) throws
 			Errors.ModuleResolutionFailure,
+			Errors.CircularModuleDependencyFailure,
 			Errors.SyntaxParsingFailure,
 			Errors.SemanticCheckingFailure,
 			Errors.LevelCheckingFailure {
 		TreeNode syntaxTree = parseSyntax(sourceCode);
-		resolveDependencies(syntaxTree, deps, pendingModules);
+		resolveDependencies(syntaxTree, deps, pendingModules, moduleSearchPaths);
 		Result result = checkSemantic(syntaxTree, deps);
 		checkLevel(result.semanticTree);
 		return result;
@@ -124,20 +132,22 @@ public class Parser {
 	 * @param syntaxTree The syntax parse tree.
 	 * @param deps Table of resolved dependencies.
 	 * @param pendingModules Modules with yet-unresolved dependencies.
-	 * @throws IOException If a module dependency cannot be resolved.
+	 * @param moduleSearchPaths Directories in which to look for modules.
 	 */
 	private static void resolveDependencies(
 			TreeNode syntaxTree,
 			ExternalModuleTable deps,
-			Set<String> pendingModules
+			Deque<String> pendingModules,
+			Path[] moduleSearchPaths
 		) throws
 			Errors.ModuleResolutionFailure,
+			Errors.CircularModuleDependencyFailure,
 			Errors.SyntaxParsingFailure,
 			Errors.SemanticCheckingFailure,
 			Errors.LevelCheckingFailure {
 		// Index 0 is the module header: ---- MODULE ModName ----
 		String moduleName = syntaxTree.heirs()[0].heirs()[1].getImage();
-		pendingModules.add(moduleName);
+		pendingModules.addFirst(moduleName);
 
 		// Index 1 is the EXTENDS statement: EXTENDS Naturals, Sequences
 		TreeNode extensions = syntaxTree.heirs()[1];
@@ -146,18 +156,16 @@ public class Parser {
 			TreeNode extension = extensions.heirs()[i];
 			String depName = extension.getImage();
 			if (pendingModules.contains(depName)) {
-				throw new IllegalArgumentException(
-					"Circular dependency: module " + moduleName + " depends on " + depName + ", which in turn depends on it."
-				);
+				throw new Errors.CircularModuleDependencyFailure(pendingModules, depName, moduleName);
 			}
 			if (null == deps.getModuleNode(depName)) {
-				InputStream depSourceCode = resolveModule(depName);
-				Result result = parse(depSourceCode, deps, pendingModules);
+				InputStream depSourceCode = resolveModule(depName, moduleSearchPaths);
+				Result result = parse(depSourceCode, deps, pendingModules, moduleSearchPaths);
 				deps.put(UniqueString.of(depName), null, result.semanticTree);
 			}
 		}
 
-		pendingModules.remove(moduleName);
+		pendingModules.pop();
 	}
 
 	/**
@@ -165,17 +173,34 @@ public class Parser {
 	 * modules that are embedded in the tla2tools jar.
 	 * @param moduleName The name of the module to resolve.
 	 * @return An input stream of the module source code.
-	 * @throws IOException If the module could not be found.
+	 * @param moduleSearchPaths Directories in which to look for modules.
 	 */
 	private static InputStream resolveModule(
-		String moduleName
+		String moduleName,
+		Path[] moduleSearchPaths
 	) throws Errors.ModuleResolutionFailure {
-		String resourcePath = "/tla2sany/StandardModules/" + moduleName + ".tla";
-		InputStream module = Parser.class.getResourceAsStream(resourcePath);
-		if (null == module) {
-			throw new Errors.ModuleResolutionFailure(moduleName);
+		if (Constants.isStandardModule(moduleName)) {
+			String resourcePath = String.format("/tla2sany/StandardModules/%s%s", moduleName, Constants.TLA_FILE_SUFFIX);
+			InputStream module = Parser.class.getResourceAsStream(resourcePath);
+			if (null == module) {
+				throw new RuntimeException("ERROR: Missing standard module " + moduleName);
+			}
+			return module;
 		}
-		return module;
+
+		for (Path dir : moduleSearchPaths) {
+			try {
+				Path modulePath = dir.resolve(moduleName + Constants.TLA_FILE_SUFFIX);
+				return new FileInputStream(modulePath.toFile());
+			} catch (InvalidPathException e) {
+				throw new Errors.ModuleResolutionFailure(e);
+			} catch (IOException e) {
+				// Module does not exist here; continue.
+				continue;
+			}
+		}
+		
+		throw new Errors.ModuleResolutionFailure(moduleName, moduleSearchPaths);
 	}
 
 	/**
@@ -210,8 +235,8 @@ public class Parser {
 	 */
 	private static void checkLevel(ModuleNode semanticTree) throws
 			Errors.LevelCheckingFailure {
-		if (!semanticTree.levelCheck(1)) {
-			throw new Errors.LevelCheckingFailure(staticLog);
+		if (!semanticTree.levelCheck(1) || STATIC_LOG.isFailure()) {
+			throw new Errors.LevelCheckingFailure(STATIC_LOG);
 		}
 	}
 }
