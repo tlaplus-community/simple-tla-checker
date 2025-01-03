@@ -42,7 +42,6 @@ public class Checker {
 	static int run(Path spec) throws ParseException {
 		try {
 			Parser.Result parsed = Parser.parse(spec);
-			Experiments.addNewDefinition(parsed, "foo == 5");
 			Model model = new Model(parsed);
 			List<State> failureTrace = check(model);
 			if (null == failureTrace) {
