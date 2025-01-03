@@ -20,14 +20,11 @@ import tla2sany.semantic.AbortException;
 import tla2sany.semantic.Context;
 import tla2sany.semantic.ExternalModuleTable;
 import tla2sany.semantic.Generator;
-import tla2sany.semantic.SemanticNode;
 
 /**
  * Get from spec filepath to semantic graph.
  */
 public class Parser {
-	
-	public static tla2sany.semantic.Errors STATIC_LOG = new tla2sany.semantic.Errors();
 	
 	public static class Result {
 		public final TreeNode syntaxTree;
@@ -63,7 +60,6 @@ public class Parser {
 			Errors.SyntaxParsingFailure,
 			Errors.SemanticCheckingFailure,
 			Errors.LevelCheckingFailure {
-		SemanticNode.setError(STATIC_LOG);
 		InputStream sourceCode;
 		try {
 			sourceCode = new FileInputStream(spec.toFile());
@@ -235,8 +231,7 @@ public class Parser {
 	 */
 	private static void checkLevel(ModuleNode semanticTree) throws
 			Errors.LevelCheckingFailure {
-		if (!semanticTree.levelCheck(1) || STATIC_LOG.isFailure()) {
-			throw new Errors.LevelCheckingFailure(STATIC_LOG);
+		if (!semanticTree.levelCheck(1)) {
 		}
 	}
 }
